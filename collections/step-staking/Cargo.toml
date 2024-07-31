@@ -5,7 +5,10 @@ edition = "2021"
 
 [dependencies]
 axum = "0.7.5"
+borsh = "1.5.1"
+jupiter-swap-api-client = "0.1.0"
 serde = "1.0.203"
+solana-client = "2.0.3"
 solana-sdk = "2.0.1"
 spl-associated-token-account = "4.0.0"
 spl-token = "6.0.0"
