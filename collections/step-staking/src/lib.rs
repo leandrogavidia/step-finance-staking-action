@@ -7,12 +7,13 @@ use solana_sdk::{
     pubkey::Pubkey,
     transaction::Transaction,
 };
+use serde::{Serialize, Deserialize};
+use sha2::{Digest, Sha256};
 use spl_associated_token_account::get_associated_token_address;
 use spl_token::ID as TOKEN_PROGRAM_ID;
 use std::str::FromStr;
 use znap::prelude::*;
-
-use borsh::{BorshSerialize, BorshDeserialize};
+use bincode;
 
 #[collection]
 pub mod step_staking {
@@ -40,20 +41,32 @@ pub mod step_staking {
 
         let nonce: u8 = vault_bump;
 
-        let args: InstructionArgs = InstructionArgs { nonce, amount };
+        let args = InstructionArgs { nonce, amount };
+        let serialized_args = bincode::serialize(&args).expect("Error serializing args"); 
 
-        let instruction = Instruction::new_with_borsh(
+        let mut hasher = Sha256::new();
+        hasher.update(b"global:stake");
+        let result = hasher.finalize();
+        let first_8_bytes = &result[..8];
+
+        let mut concatenated = Vec::new();
+        concatenated.extend_from_slice(first_8_bytes);
+        concatenated.extend_from_slice(&serialized_args);
+
+        let accounts = vec![
+            AccountMeta::new_readonly(step_mint, false),
+            AccountMeta::new(xstep_mint, false),
+            AccountMeta::new(step_associated_token_address, false),
+            AccountMeta::new_readonly(account_pubkey, true),
+            AccountMeta::new(vault_pubkey, false),
+            AccountMeta::new(xstep_associated_token_address, false),
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+        ];
+
+        let instruction = Instruction::new_with_bytes(
             program_id,
-            &args,
-            vec![
-                AccountMeta::new_readonly(step_mint, false),
-                AccountMeta::new(xstep_mint, false),
-                AccountMeta::new(step_associated_token_address, false),
-                AccountMeta::new_readonly(account_pubkey, true),
-                AccountMeta::new(vault_pubkey, false),
-                AccountMeta::new(xstep_associated_token_address, false),
-                AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-            ],
+            &concatenated,
+            accounts 
         );
 
         let message = Message::new(&[instruction], None);
@@ -70,8 +83,8 @@ pub mod step_staking {
 #[derive(Action)]
 #[action(
     icon = "https://raw.githubusercontent.com/leandrogavidia/files/main/xStep-01.png",
-    title = "Stake Step by SOL",
-    description = "You will stake",
+    title = "Stake xStep",
+    description = "From SOL to xStep",
     label = "Stake",
     link = {
         label = "Stake",
@@ -88,7 +101,7 @@ enum ActionError {
     InvalidAccountPublicKey,
 }
 
-#[derive(BorshSerialize, BorshDeserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct InstructionArgs {
     pub nonce: u8,
     pub amount: u64,

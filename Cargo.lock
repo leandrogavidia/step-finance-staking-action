@@ -4622,9 +4622,10 @@ name = "step-staking"
 version = "0.1.0"
 dependencies = [
  "axum",
- "borsh 1.5.1",
+ "bincode",
  "jupiter-swap-api-client",
  "serde",
+ "sha2 0.10.8",
  "solana-client",
  "solana-sdk 2.0.3",
  "spl-associated-token-account",
