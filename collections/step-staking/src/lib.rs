@@ -10,6 +10,7 @@ use solana_sdk::{
 use serde::{Serialize, Deserialize};
 use sha2::{Digest, Sha256};
 use spl_associated_token_account::get_associated_token_address;
+use spl_associated_token_account::instruction::create_associated_token_account_idempotent;
 use spl_token::ID as TOKEN_PROGRAM_ID;
 use std::str::FromStr;
 use znap::prelude::*;
@@ -34,26 +35,46 @@ pub mod step_staking {
         let xstep_associated_token_address =
             get_associated_token_address(&account_pubkey, &xstep_mint);
 
-        let amount = (ctx.query.amount * (LAMPORTS_PER_SOL as f32)) as u64;
-
         let seeds: &[&[u8]] = &[&step_mint.to_bytes()];
         let (vault_pubkey, vault_bump) = Pubkey::find_program_address(seeds, &program_id);
 
         let nonce: u8 = vault_bump;
 
-        let args = InstructionArgs { nonce, amount };
-        let serialized_args = bincode::serialize(&args).expect("Error serializing args"); 
+        let amount = (ctx.query.amount * (LAMPORTS_PER_SOL as f32)) as u64;
+        
+        // Create Step ATA instruction
 
-        let mut hasher = Sha256::new();
-        hasher.update(b"global:stake");
-        let result = hasher.finalize();
-        let first_8_bytes = &result[..8];
+        let create_xstep_ata_instruction = create_associated_token_account_idempotent(
+            &account_pubkey,
+            &account_pubkey,
+            &xstep_mint,
+            &TOKEN_PROGRAM_ID
+        );
 
-        let mut concatenated = Vec::new();
-        concatenated.extend_from_slice(first_8_bytes);
-        concatenated.extend_from_slice(&serialized_args);
+        // Create xStep ATA instruction
 
-        let accounts = vec![
+        let create_step_ata_instruction = create_associated_token_account_idempotent(
+            &account_pubkey,
+            &account_pubkey,
+            &step_mint,
+            &TOKEN_PROGRAM_ID
+        );
+        
+        // Stake instruction
+
+        let stake_args = StakeInstructionArgs { nonce, amount };
+        let stake_serialized_args = bincode::serialize(&stake_args).expect("Error serializing args");
+
+        let mut stake_hasher = Sha256::new();
+        stake_hasher.update(b"global:stake");
+        let stake_result = stake_hasher.finalize();
+        let stake_first_8_bytes = &stake_result[..8];
+
+        let mut stake_data = Vec::new();
+        stake_data.extend_from_slice(stake_first_8_bytes);
+        stake_data.extend_from_slice(&stake_serialized_args);
+
+        let stake_accounts = vec![
             AccountMeta::new_readonly(step_mint, false),
             AccountMeta::new(xstep_mint, false),
             AccountMeta::new(step_associated_token_address, false),
@@ -63,13 +84,19 @@ pub mod step_staking {
             AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
         ];
 
-        let instruction = Instruction::new_with_bytes(
+        let stake_instruction = Instruction::new_with_bytes(
             program_id,
-            &concatenated,
-            accounts 
+            &stake_data,
+            stake_accounts 
         );
 
-        let message = Message::new(&[instruction], None);
+        // Send transaction
+
+        let message = Message::new(&[
+            create_step_ata_instruction, 
+            create_xstep_ata_instruction, 
+            stake_instruction
+        ], None);
 
         let transaction = Transaction::new_unsigned(message);
 
@@ -102,7 +129,12 @@ enum ActionError {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct InstructionArgs {
+pub struct InitializeXstepInstructionArgs {
+    pub nonce: u8
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct StakeInstructionArgs {
     pub nonce: u8,
     pub amount: u64,
 }
