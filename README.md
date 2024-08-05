@@ -5,6 +5,8 @@ This Solana Action has been created to assist the Solana community, particularly
 ## Created using
 
 - [Znap framework](https://github.com/heavy-duty/znap)
+- [Step Staking Program](https://solscan.io/account/Stk5NCWomVN3itaFjLu382u9ibb5jMSHEsh6CuhaGjB);
+- [Jupiter V6 Swap API](https://station.jup.ag/docs/apis/swap-api)
 - Solana libraries
 
 ## How to run:

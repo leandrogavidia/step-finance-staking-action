@@ -1,5 +1,5 @@
 use bincode;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use solana_sdk::{
@@ -24,7 +24,7 @@ pub mod step_staking {
         let account_pubkey = Pubkey::from_str(&ctx.payload.account)
             .or_else(|_| Err(Error::from(ActionError::InvalidAccountPublicKey)))?;
 
-        let program_id = pubkey!("Stk5NCWomVN3itaFjLu382u9ibb5jMSHEsh6CuhaGjB");
+        let stake_program_id = pubkey!("Stk5NCWomVN3itaFjLu382u9ibb5jMSHEsh6CuhaGjB");
 
         let native_mint = pubkey!("So11111111111111111111111111111111111111112");
         let step_mint = pubkey!("StepAscQoEioFxxWGnh2sLBDFp9d8rvKz2Yp39iDpyT");
@@ -36,7 +36,7 @@ pub mod step_staking {
             get_associated_token_address(&account_pubkey, &xstep_mint);
 
         let seeds: &[&[u8]] = &[&step_mint.to_bytes()];
-        let (vault_pubkey, vault_bump) = Pubkey::find_program_address(seeds, &program_id);
+        let (vault_pubkey, vault_bump) = Pubkey::find_program_address(seeds, &stake_program_id);
 
         let nonce: u8 = vault_bump;
 
@@ -51,17 +51,27 @@ pub mod step_staking {
             &TOKEN_PROGRAM_ID,
         );
 
+        // Create xStep ATA instruction
+
+        let create_step_ata_instruction = create_associated_token_account_idempotent(
+            &account_pubkey,
+            &account_pubkey,
+            &xstep_mint,
+            &TOKEN_PROGRAM_ID,
+        );
+
         // Create swap Instruction
 
         let client = Client::new();
         let base_url = "https://quote-api.jup.ag/v6";
 
         let slippage_bps = "50";
+        let max_accounts = "9";
 
         let quote_response = client
             .get(format!(
-                "{}/quote?inputMint={}&outputMint={}&amount={}&slippageBps={}&maxAccounts=9",
-                base_url, native_mint, step_mint, amount, slippage_bps
+                "{}/quote?inputMint={}&outputMint={}&amount={}&slippageBps={}&maxAccounts={}",
+                base_url, native_mint, step_mint, amount, slippage_bps, max_accounts
             ))
             .send()
             .await
@@ -73,14 +83,10 @@ pub mod step_staking {
         let step_amount = match quote_response.out_amount.parse::<u64>() {
             Ok(value) => value,
             Err(e) => {
-                eprintln!("Error al convertir out_amount a u64: {}", e);
-                // Maneja el error como consideres adecuado, por ejemplo, puedes retornar un valor por defecto
-                0 // O cualquier otro valor que tenga sentido en tu contexto
+                eprintln!("Error converting out_amount into u64: {}", e);
+                0
             }
         };
-
-        let quote_response_json = serde_json::to_string_pretty(&quote_response).expect("Error serializing quote_response to JSON string");
-        println!("Quote Response: {}", quote_response_json);
 
         let swap_request = SwapRequest { quote_response, user_public_key: account_pubkey.to_string() };
 
@@ -103,17 +109,6 @@ pub mod step_staking {
         let setup_instructions = swap_instructions.setup_instructions;
         let swap_instruction = swap_instructions.swap_instruction;
         let cleanup_instruction = swap_instructions.cleanup_instruction;
-
-        println!("{:?}", swap_instruction); 
-
-        // Create xStep ATA instruction
-
-        let create_step_ata_instruction = create_associated_token_account_idempotent(
-            &account_pubkey,
-            &account_pubkey,
-            &xstep_mint,
-            &TOKEN_PROGRAM_ID,
-        );
 
         // Stake instruction
 
@@ -141,7 +136,7 @@ pub mod step_staking {
         ];
 
         let stake_instruction =
-            Instruction::new_with_bytes(program_id, &stake_data, stake_accounts);
+            Instruction::new_with_bytes(stake_program_id, &stake_data, stake_accounts);
 
         // Send transaction
 
@@ -180,7 +175,7 @@ pub mod step_staking {
 
 #[derive(Action)]
 #[action(
-    icon = "https://raw.githubusercontent.com/leandrogavidia/files/main/xStep-01.png",
+    icon = "https://raw.githubusercontent.com/leandrogavidia/files/main/blink-step-finance-staking-by-sol.jpg",
     title = "Stake xStep",
     description = "From SOL to xStep",
     label = "Stake",
@@ -244,7 +239,7 @@ struct QuoteResponse {
     other_amount_threshold: String,
     swap_mode: String,
     slippage_bps: u32,
-    platform_fee: Option<u32>, // Puede ser null
+    platform_fee: Option<u32>,
     price_impact_pct: String,
     route_plan: Vec<Route>,
     context_slot: u64,
