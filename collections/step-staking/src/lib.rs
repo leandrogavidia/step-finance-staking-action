@@ -168,7 +168,7 @@ pub mod step_staking {
 
         Ok(ActionTransaction {
             transaction,
-            message: Some("Stake Step".to_string()),
+            message: Some("Stake successfully completed".to_string()),
         })
     }
 }
@@ -177,7 +177,7 @@ pub mod step_staking {
 #[action(
     icon = "https://raw.githubusercontent.com/leandrogavidia/files/main/blink-step-finance-staking-by-sol.jpg",
     title = "Stake xStep",
-    description = "From SOL to xStep",
+    description = "Stake xStep tokens with SOL",
     label = "Stake",
     link = {
         label = "Stake",
