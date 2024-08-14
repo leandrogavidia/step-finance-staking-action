@@ -1,5 +1,5 @@
 identity = "~/.config/solana/id.json"
-rpc_url = "http://api.devnet.solana.com"
+rpc_url = "https://api.devnet.solana.com"
 
 [[collections]]
 name = "step-staking"

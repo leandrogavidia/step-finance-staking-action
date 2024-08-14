@@ -2,12 +2,14 @@ use bincode;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
-    instruction::AccountMeta, instruction::Instruction, message::Message,
-    native_token::LAMPORTS_PER_SOL, pubkey, pubkey::Pubkey, transaction::Transaction,
+    instruction::AccountMeta, instruction::Instruction, message::Message, program_pack::Pack,
+    pubkey, pubkey::Pubkey, transaction::Transaction
 };
 use spl_associated_token_account::get_associated_token_address;
 use spl_associated_token_account::instruction::create_associated_token_account_idempotent;
+use spl_token::state::Mint;
 use spl_token::ID as TOKEN_PROGRAM_ID;
 use std::str::FromStr;
 use znap::prelude::*;
@@ -20,13 +22,20 @@ pub mod step_staking {
 
     use super::*;
 
-    pub fn by_sol(ctx: Context<BySolAction>) -> Result<ActionTransaction> {
+    pub fn stake(ctx: Context<StakeAction>) -> Result<ActionTransaction> {
         let account_pubkey = Pubkey::from_str(&ctx.payload.account)
             .or_else(|_| Err(Error::from(ActionError::InvalidAccountPublicKey)))?;
 
+        let input_mint_address = Pubkey::from_str(&ctx.params.mint)
+            .or_else(|_| Err(Error::from(ActionError::InvalidInputMintAddress)))?;
+
+        let connection = RpcClient::new(ctx.env.rpc_url.to_string());
+
+        let info = connection.get_account_data(&input_mint_address).unwrap();
+        let account_data = Mint::unpack(&info).unwrap();
+
         let stake_program_id = pubkey!("Stk5NCWomVN3itaFjLu382u9ibb5jMSHEsh6CuhaGjB");
 
-        let native_mint = pubkey!("So11111111111111111111111111111111111111112");
         let step_mint = pubkey!("StepAscQoEioFxxWGnh2sLBDFp9d8rvKz2Yp39iDpyT");
         let xstep_mint = pubkey!("xStpgUCss9piqeFUk2iLVcvJEGhAdJxJQuwLkXP555G");
 
@@ -40,11 +49,12 @@ pub mod step_staking {
 
         let nonce: u8 = vault_bump;
 
-        let amount = (ctx.query.amount * (LAMPORTS_PER_SOL as f32)) as u64;
+        let decimals_result = 10u32.pow(account_data.decimals as u32);
+        let amount = (ctx.query.amount * (decimals_result as f32)) as u64;
 
         // Create Step ATA instruction
 
-        let create_xstep_ata_instruction = create_associated_token_account_idempotent(
+        let create_step_ata_instruction = create_associated_token_account_idempotent(
             &account_pubkey,
             &account_pubkey,
             &step_mint,
@@ -53,7 +63,7 @@ pub mod step_staking {
 
         // Create xStep ATA instruction
 
-        let create_step_ata_instruction = create_associated_token_account_idempotent(
+        let create_xstep_ata_instruction = create_associated_token_account_idempotent(
             &account_pubkey,
             &account_pubkey,
             &xstep_mint,
@@ -65,20 +75,19 @@ pub mod step_staking {
         let client = Client::new();
         let base_url = "https://quote-api.jup.ag/v6";
 
-        let slippage_bps = "50";
         let max_accounts = "9";
 
         let quote_response = client
             .get(format!(
-                "{}/quote?inputMint={}&outputMint={}&amount={}&slippageBps={}&maxAccounts={}",
-                base_url, native_mint, step_mint, amount, slippage_bps, max_accounts
+                "{}/quote?inputMint={}&outputMint={}&amount={}&maxAccounts={}",
+                base_url, input_mint_address, step_mint, amount, max_accounts
             ))
             .send()
             .await
             .or_else(|_| Err(Error::from(ActionError::InternalServerError)))?
             .json::<QuoteResponse>()
             .await
-            .or_else(|_| Err(Error::from(ActionError::InvalidResponseBody)))?;
+            .or_else(|_| Err(Error::from(ActionError::QuoteNotFound)))?;
 
         let step_amount = match quote_response.out_amount.parse::<u64>() {
             Ok(value) => value,
@@ -88,18 +97,18 @@ pub mod step_staking {
             }
         };
 
-        let swap_request = SwapRequest { quote_response, user_public_key: account_pubkey.to_string() };
+        let swap_request = SwapRequest {
+            quote_response,
+            user_public_key: account_pubkey.to_string(),
+        };
 
         let swap_instructions = client
-            .post(format!(
-                "{}/swap-instructions",
-                base_url
-            ))
+            .post(format!("{}/swap-instructions", base_url))
             .header("Accept", "application/json")
             .json(&swap_request)
             .send()
             .await
-            .or_else(|_| Err(Error::from(ActionError::InternalServerError)))? 
+            .or_else(|_| Err(Error::from(ActionError::InternalServerError)))?
             .json::<SwapInstructions>()
             .await
             .or_else(|_| Err(Error::from(ActionError::InvalidResponseBody)))?;
@@ -112,7 +121,10 @@ pub mod step_staking {
 
         // Stake instruction
 
-        let stake_args = StakeInstructionArgs { nonce, amount: step_amount };
+        let stake_args = StakeInstructionArgs {
+            nonce,
+            amount: step_amount,
+        };
         let stake_serialized_args =
             bincode::serialize(&stake_args).expect("Error serializing args");
 
@@ -140,10 +152,7 @@ pub mod step_staking {
 
         // Send transaction
 
-        let mut instructions = vec![
-            create_step_ata_instruction,
-            create_xstep_ata_instruction,
-        ]; 
+        let mut instructions = vec![create_step_ata_instruction, create_xstep_ata_instruction];
 
         if let Some(instruction) = token_ledger_instruction {
             instructions.push(instruction);
@@ -159,10 +168,7 @@ pub mod step_staking {
 
         instructions.push(stake_instruction);
 
-        let message = Message::new(
-            &instructions,
-            None,
-        );
+        let message = Message::new(&instructions, None);
 
         let transaction = Transaction::new_unsigned(message);
 
@@ -176,24 +182,29 @@ pub mod step_staking {
 #[derive(Action)]
 #[action(
     icon = "https://raw.githubusercontent.com/leandrogavidia/files/main/blink-step-finance-staking-by-sol.jpg",
-    title = "Stake xStep",
-    description = "Stake xStep tokens with SOL",
+    title = "Stake Step",
+    description = "Stake Step tokens with any SPL token | Swaps powered by Jupiter",
     label = "Stake",
     link = {
         label = "Stake",
-        href = "/api/by_sol?amount={amount}",
-        parameter = { label = "Amount in SOL", name = "amount" }
+        href = "/api/stake/{{params.mint}}?amount={amount}",
+        parameter = { label = "Amount", name = "amount" }
     }
 )]
 #[query(amount: f32)]
-pub struct BySolAction;
+#[params(mint: String)]
+pub struct StakeAction;
 
 #[derive(ErrorCode)]
 enum ActionError {
     #[error(msg = "Invalid account public key")]
     InvalidAccountPublicKey,
+    #[error(msg = "Invalid input mint address")]
+    InvalidInputMintAddress,
     #[error(msg = "Internal server error")]
     InternalServerError,
+    #[error(msg = "No quote was found for this token at this time")]
+    QuoteNotFound,
     #[error(msg = "Invalid response body")]
     InvalidResponseBody,
 }
@@ -207,6 +218,12 @@ pub struct InitializeXstepInstructionArgs {
 pub struct StakeInstructionArgs {
     pub nonce: u8,
     pub amount: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SplTokenInfo {
+    decimals: u8,
+    supply: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -250,7 +267,7 @@ struct QuoteResponse {
 #[serde(rename_all = "camelCase")]
 struct SwapRequest {
     quote_response: QuoteResponse,
-    user_public_key: String
+    user_public_key: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

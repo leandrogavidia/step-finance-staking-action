@@ -13,3 +13,5 @@ This Solana Action has been created to assist the Solana community, particularly
 
 1. `git clone <repository-url>`
 2. `znap run <COLLECTION-NAME>`
+
+## LICENSE: MIT
